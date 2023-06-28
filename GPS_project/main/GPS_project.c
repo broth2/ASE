@@ -20,7 +20,7 @@
 #include "driver/gpio.h"
 #include "utils.h"
 #include "pMod.h"
-#include "Math.h"
+#include "math.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "freertos/event_groups.h"

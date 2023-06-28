@@ -1,7 +1,7 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, send_file
 from flask import request
 import json
-
+import socket
 app = Flask(__name__)
 app.template_folder = 'templates'
 app.static_folder = 'static'
@@ -19,6 +19,10 @@ def index():
     
     return render_template('index.html')
 
+@app.route('/fetch_update', methods=['GET'])
+def fetch_update():
+    file_path = '../build/GPS_project.bin'
+    return send_file(file_path, as_attachment=True)
 
 
 @app.route('/api', methods=['POST'])
@@ -105,4 +109,7 @@ def send_stored_data():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+    host = socket.gethostbyname(socket.gethostname())
+    print("ola")
+    print(f" * Running on http://{host}:/ (Press CTRL+C to quit)")
+    app.run(host='0.0.0.0', port=6000)

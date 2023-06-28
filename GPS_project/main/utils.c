@@ -1,34 +1,52 @@
-    #include "utils.h"
-    #include "globals.h"
-    #include "esp_spiffs.h"
-    #include "esp_sntp.h"
+#include "utils.h"
+#include "globals.h"
+#include "esp_spiffs.h"
+#include "esp_sntp.h"
+#include "esp_ota_ops.h"
 
-    #define EXAMPLE_ESP_WIFI_SSID "iPhone de João"
-    #define EXAMPLE_ESP_WIFI_PASS "batman123"
-    #define EXAMPLE_ESP_MAXIMUM_RETRY 5
+#define EXAMPLE_ESP_WIFI_SSID "Bic Corn"
+#define EXAMPLE_ESP_WIFI_PASS "batman123"
+#define EXAMPLE_ESP_MAXIMUM_RETRY 5
 
-    #define CONFIG_FILE_PATH "/spiffs/config.txt"
-    #define FILE_PATH "/spiffs/data.txt"
+#define CONFIG_FILE_PATH "/spiffs/config.txt"
+#define FILE_PATH "/spiffs/data.txt"
 
-    #define WIFI_CONNECTED_BIT BIT0
-    #define WIFI_FAIL_BIT      BIT1
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT      BIT1
 
-    #define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WPA3_PSK
-    #define ESP_WIFI_SAE_MODE WPA3_SAE_PWE_BOTH
+#define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WPA3_PSK
+#define ESP_WIFI_SAE_MODE WPA3_SAE_PWE_BOTH
 
-    #define BOUNDING_AREA_SIZE 10
+#define BOUNDING_AREA_SIZE 10
 
-    static int s_retry_num = 0;
-    bool newGpsDataAvailable = false;
-    /* FreeRTOS event group to signal when we are connected*/
-    static EventGroupHandle_t s_wifi_event_group;
+#define BUFFSIZEU 1024
+uint8_t ota_write_data[BUFFSIZEU + 1] = { 0 };
+#ifndef ESP_APP_DESC_SHA256_LEN
+#define ESP_APP_DESC_SHA256_LEN 32
+#endif
 
-    static  esp_http_client_config_t http_config = {
-    .url =  "http://172.20.10.6:8000/api",
+
+static int s_retry_num = 0;
+bool newGpsDataAvailable = false;
+/* FreeRTOS event group to signal when we are connected*/
+static EventGroupHandle_t s_wifi_event_group;
+
+static  esp_http_client_config_t http_config = {
+    .url =  "http://172.20.10.11:5000/api",
     .method = HTTP_METHOD_POST,
-  };
+};
 
-  static esp_http_client_handle_t client;
+static  esp_http_client_config_t http_update_config = {
+    .url =  "http://172.20.10.11:5000/fetch_update",
+        .event_handler = NULL,
+        .timeout_ms = 5000,
+};
+
+static esp_http_client_handle_t client;
+static esp_http_client_handle_t client_updates;
+
+esp_ota_handle_t update_handle = 0;
+const esp_partition_t *update_partition = NULL;
 
     static void event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data)
@@ -437,7 +455,7 @@ void terminalTask(void *parameters) {
             
             printf("\n\n");
             printf("Choose an operation:\n");
-            printf("0 - Set NMEA Output\n ");
+            printf("0 - Set NMEA Output\n");
             printf("1 - Set Start mode 1\n");
             printf("2 - Set Position Fix Interval\n");
             printf("3 - Get Current Position \n");
@@ -446,11 +464,12 @@ void terminalTask(void *parameters) {
                 printf("5 - Upload Stored Data to Server\n");
             }
             if(low_power_mode == false){
-                printf("6 - Set Low Power Mode");
+                printf("6 - Set Low Power Mode\n");
             }else{
-                printf("6 - Set Normal Mode");
+                printf("6 - Set Normal Mode\n");
             }
             
+            printf("7 - Get OTA Update\n");
             scanf("%d", &choice); // Move scanf inside the loop
 
             switch (choice) {
@@ -571,6 +590,9 @@ void terminalTask(void *parameters) {
                             esp_wifi_connect();
                         }
                     }
+                    break;
+                case 7:
+                    updateTask();
                     break;
                 default:
                     printf("Invalid operation. Try again.\n");
@@ -703,6 +725,79 @@ void http_post_task(void *pvParameters) {
 
   // Clean up
   esp_http_client_cleanup(client);
+}
+
+void updateTask(){
+    static const char *TAG = "OTA";
+    ESP_LOGI(TAG, "Connection ???...");
+    client_updates = esp_http_client_init(&http_update_config);
+    esp_err_t err = esp_http_client_perform(client_updates);
+
+    ESP_LOGI(TAG, "Connection !!!!!!..");
+    if (err == ESP_OK)
+    {
+        ESP_LOGI(TAG, "Connection established...");
+        int content_length = esp_http_client_fetch_headers(client_updates);
+        ESP_LOGI(TAG, "Content length: %d bytes", content_length);
+
+       
+        if (content_length > 0)
+        {
+
+            update_partition = esp_ota_get_next_update_partition(NULL);
+            err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &update_handle);
+            if (err != ESP_OK)
+            {
+                ESP_LOGE(TAG, "esp_ota_begin failed, error=%d", err);
+                return;
+            }
+            ESP_LOGI(TAG, "esp_ota_begin succeeded");
+
+            // Perform OTA Update
+            while (1){
+                int data_read = esp_http_client_read(client, (char *)ota_write_data, BUFFSIZEU);
+                if (data_read < 0)
+                {
+                    ESP_LOGE(TAG, "Error: SSL data read error");
+                    return;
+                }
+                else if (data_read > 0)
+                {
+                    err = esp_ota_write( update_handle, (const void *)ota_write_data, data_read);
+                    if (err != ESP_OK)
+                    {
+                        return;
+                    }
+                }
+                else if (data_read == 0)
+                {
+                    ESP_LOGI(TAG, "Connection closed, all data received no update found");
+                    break;
+                }
+            }
+
+            err = esp_ota_end(update_handle);
+            if (err != ESP_OK){
+                ESP_LOGE(TAG, "esp_ota_end failed!");
+                return;
+            }
+
+            err = esp_ota_set_boot_partition(update_partition);
+            if (err != ESP_OK){
+                ESP_LOGE(TAG, "esp_ota_set_boot_partition failed!");
+                return;
+            }
+
+            ESP_LOGI(TAG, "Prepare to restart system!");
+            esp_restart();
+        }
+    }
+    else{
+        ESP_LOGE(TAG, "Failed to check for updates, HTTP error: %d", err);
+    }
+
+    esp_http_client_cleanup(client_updates);
+
 }
 
 

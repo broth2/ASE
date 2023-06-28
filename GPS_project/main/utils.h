@@ -8,7 +8,7 @@
 #include "lwip/sys.h"
 #include <esp_wifi_types.h>
 #include "esp_http_client.h"
-#include "pMod.h "
+#include "pMod.h"
 #include "esp_console.h"
 #include "esp_vfs_dev.h"
 #include "esp_vfs_fat.h"
@@ -27,6 +27,7 @@ void gpsTask(void *parameters);
 void wifiCheckTask(void *parameters);
 void terminalTask(void *parameters);
 void http_post_task(void *pvParameters);
+void updateTask();
 void initialize_sntp();
 void wait_for_sntp_sync();
 // Create a file and write configurations
