@@ -3,8 +3,9 @@
 #include "esp_spiffs.h"
 #include "esp_sntp.h"
 #include "esp_ota_ops.h"
+#include <esp_http_client.h>
 
-#define EXAMPLE_ESP_WIFI_SSID "Bic Corn"
+#define EXAMPLE_ESP_WIFI_SSID "iPhone de João"
 #define EXAMPLE_ESP_WIFI_PASS "batman123"
 #define EXAMPLE_ESP_MAXIMUM_RETRY 5
 
@@ -32,14 +33,15 @@ bool newGpsDataAvailable = false;
 static EventGroupHandle_t s_wifi_event_group;
 
 static  esp_http_client_config_t http_config = {
-    .url =  "http://172.20.10.11:5000/api",
+    .url =  "http://172.20.10.6:5000/api",
     .method = HTTP_METHOD_POST,
 };
 
 static  esp_http_client_config_t http_update_config = {
-    .url =  "http://172.20.10.11:5000/fetch_update",
-        .event_handler = NULL,
-        .timeout_ms = 5000,
+    .url =  "http://172.20.10.6:5000/fetch_update",
+    .method = HTTP_METHOD_GET,
+    .event_handler = NULL,
+    .timeout_ms = 50000
 };
 
 static esp_http_client_handle_t client;
@@ -729,23 +731,44 @@ void http_post_task(void *pvParameters) {
 
 void updateTask(){
     static const char *TAG = "OTA";
-    ESP_LOGI(TAG, "Connection ???...");
+    ESP_LOGI(TAG, "Connection 1");
     client_updates = esp_http_client_init(&http_update_config);
     esp_err_t err = esp_http_client_perform(client_updates);
 
-    ESP_LOGI(TAG, "Connection !!!!!!..");
+    ESP_LOGI(TAG, "Connection 2");
     if (err == ESP_OK)
     {
-        ESP_LOGI(TAG, "Connection established...");
-        int content_length = esp_http_client_fetch_headers(client_updates);
+        int status_code = esp_http_client_get_status_code(client_updates);
+        int content_length = esp_http_client_get_content_length(client_updates);
+        ESP_LOGI(TAG, "stat code: %d", status_code);
         ESP_LOGI(TAG, "Content length: %d bytes", content_length);
 
+        int header_code = esp_http_client_fetch_headers(client_updates);
+        ESP_LOGI(TAG, "Headers: %d bytes", header_code);
+
+        // int data_read = esp_http_client_read(client_updates, (char *)ota_write_data, BUFFSIZEU);
+        
+        // ESP_LOGI(TAG, "Truest Content length: %d bytes", data_read);
+
+        // int read_len;
+        // do{
+        //     read_len = esp_http_client_read(client_updates, (char *)ota_write_data, BUFFSIZEU);
+        //         if (read_len > 0) {
+        //             ESP_LOGI(TAG, "BYTE");
+        //         }
+        //         else{
+        //             ESP_LOGE(TAG, "BYTE");
+        //         }
+
+
+        // }while (read_len > 0);
        
         if (content_length > 0)
         {
 
             update_partition = esp_ota_get_next_update_partition(NULL);
             err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &update_handle);
+            ESP_LOGI(TAG, "begin: %d", err);
             if (err != ESP_OK)
             {
                 ESP_LOGE(TAG, "esp_ota_begin failed, error=%d", err);
@@ -755,7 +778,7 @@ void updateTask(){
 
             // Perform OTA Update
             while (1){
-                int data_read = esp_http_client_read(client, (char *)ota_write_data, BUFFSIZEU);
+                int data_read = esp_http_client_read(client_updates, (char *)ota_write_data, BUFFSIZEU);
                 if (data_read < 0)
                 {
                     ESP_LOGE(TAG, "Error: SSL data read error");
@@ -790,6 +813,8 @@ void updateTask(){
 
             ESP_LOGI(TAG, "Prepare to restart system!");
             esp_restart();
+        }else{
+            ESP_LOGE(TAG, "\nSIZE ZERO LOL");
         }
     }
     else{
