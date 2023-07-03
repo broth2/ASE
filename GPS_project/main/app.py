@@ -1,7 +1,8 @@
-from flask import Flask, render_template, send_file
+from flask import Flask, render_template, send_file, make_response
 from flask import request
 import json
 import socket
+import os
 app = Flask(__name__)
 app.template_folder = 'templates'
 app.static_folder = 'static'
@@ -12,6 +13,7 @@ Status, Speed, Course,bounding_area_available = 0, 0, 0, False
 stored_data = False
 #create a list to store the data
 stored_coordinates = []
+curr_v = 0
 
 
 @app.route('/')
@@ -21,8 +23,19 @@ def index():
 
 @app.route('/fetch_update', methods=['GET'])
 def fetch_update():
+    vrsn = int(request.headers.get('Version'))
+    print("this is the esp version: ", vrsn)
+    print("this is the cur version: ", curr_v)
     file_path = '../build/GPS_project.bin'
-    return send_file(file_path, as_attachment=True)
+    response = send_file(file_path, as_attachment=True)
+    content_length = os.path.getsize(file_path)
+    response.headers["Content-Length"] = str(content_length)
+    print("this is content length: ", content_length)
+    if (vrsn >= curr_v):
+        response = make_response()
+        response.status_code = 204
+
+    return response
 
 
 @app.route('/api', methods=['POST'])
@@ -110,6 +123,4 @@ def send_stored_data():
 
 if __name__ == '__main__':
     host = socket.gethostbyname(socket.gethostname())
-    print("ola")
-    print(f" * Running on http://{host}:/ (Press CTRL+C to quit)")
-    app.run(host='0.0.0.0', port=6000)
+    app.run(host='0.0.0.0', port=5000, debug=True)

@@ -20,13 +20,9 @@
 
 #define BOUNDING_AREA_SIZE 10
 
-#define BUFFSIZEU 1024
-uint8_t ota_write_data[BUFFSIZEU + 1] = { 0 };
-#ifndef ESP_APP_DESC_SHA256_LEN
-#define ESP_APP_DESC_SHA256_LEN 32
-#endif
+#define OTABUFF 1024
 
-
+int version = 0;
 static int s_retry_num = 0;
 bool newGpsDataAvailable = false;
 /* FreeRTOS event group to signal when we are connected*/
@@ -37,11 +33,10 @@ static  esp_http_client_config_t http_config = {
     .method = HTTP_METHOD_POST,
 };
 
-static  esp_http_client_config_t http_update_config = {
+static esp_http_client_config_t http_update_config = {
     .url =  "http://172.20.10.6:5000/fetch_update",
     .method = HTTP_METHOD_GET,
-    .event_handler = NULL,
-    .timeout_ms = 50000
+    .timeout_ms = 5000,
 };
 
 static esp_http_client_handle_t client;
@@ -471,7 +466,7 @@ void terminalTask(void *parameters) {
                 printf("6 - Set Normal Mode\n");
             }
             
-            printf("7 - Get OTA Update\n");
+            printf("7 - Force OTA Update\n");
             scanf("%d", &choice); // Move scanf inside the loop
 
             switch (choice) {
@@ -729,93 +724,91 @@ void http_post_task(void *pvParameters) {
   esp_http_client_cleanup(client);
 }
 
+void upT(void *parameters){
+    while(1){
+        updateTask();
+        vTaskDelay(15000 / portTICK_PERIOD_MS);
+    }
+}
+
+
 void updateTask(){
     static const char *TAG = "OTA";
     ESP_LOGI(TAG, "Connection 1");
     client_updates = esp_http_client_init(&http_update_config);
-    esp_err_t err = esp_http_client_perform(client_updates);
+
+    // prepare header with version info
+    char hdr[2];
+    hdr[0] = version + '0';
+    hdr[1] = '\0';
+    const char* c_version = hdr;
+    esp_err_t hedr = esp_http_client_set_header(client_updates, "Version", c_version);
+
+    // open connection
+    esp_err_t err = esp_http_client_open(client_updates, 0);
+    if(err != ESP_OK){
+        ESP_LOGE(TAG, "Opening error!");
+    }
+    //err = esp_http_client_perform(client_updates);
 
     ESP_LOGI(TAG, "Connection 2");
-    if (err == ESP_OK)
-    {
+    if (err == ESP_OK){
+        // get info and set up function
         int status_code = esp_http_client_get_status_code(client_updates);
         int content_length = esp_http_client_get_content_length(client_updates);
+        char *buffer = (char *)malloc(OTABUFF+1);
+        if (buffer == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate memory");
+        }
         ESP_LOGI(TAG, "stat code: %d", status_code);
         ESP_LOGI(TAG, "Content length: %d bytes", content_length);
-
-        int header_code = esp_http_client_fetch_headers(client_updates);
-        ESP_LOGI(TAG, "Headers: %d bytes", header_code);
-
-        // int data_read = esp_http_client_read(client_updates, (char *)ota_write_data, BUFFSIZEU);
-        
-        // ESP_LOGI(TAG, "Truest Content length: %d bytes", data_read);
-
-        // int read_len;
-        // do{
-        //     read_len = esp_http_client_read(client_updates, (char *)ota_write_data, BUFFSIZEU);
-        //         if (read_len > 0) {
-        //             ESP_LOGI(TAG, "BYTE");
-        //         }
-        //         else{
-        //             ESP_LOGE(TAG, "BYTE");
-        //         }
-
-
-        // }while (read_len > 0);
+        content_length = esp_http_client_fetch_headers(client_updates);
+        ESP_LOGI(TAG, "Headers: %d bytes", content_length);
        
-        if (content_length > 0)
-        {
-
+        if (content_length > 0) {
+            // set up partition
             update_partition = esp_ota_get_next_update_partition(NULL);
             err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &update_handle);
-            ESP_LOGI(TAG, "begin: %d", err);
-            if (err != ESP_OK)
-            {
-                ESP_LOGE(TAG, "esp_ota_begin failed, error=%d", err);
+            if (err != ESP_OK){
+                ESP_LOGE(TAG, "esp_ota_begin error=%d", err);
                 return;
             }
-            ESP_LOGI(TAG, "esp_ota_begin succeeded");
+            ESP_LOGI(TAG, "writing file to partition...");
 
-            // Perform OTA Update
             while (1){
-                int data_read = esp_http_client_read(client_updates, (char *)ota_write_data, BUFFSIZEU);
-                if (data_read < 0)
-                {
-                    ESP_LOGE(TAG, "Error: SSL data read error");
-                    return;
-                }
-                else if (data_read > 0)
-                {
-                    err = esp_ota_write( update_handle, (const void *)ota_write_data, data_read);
-                    if (err != ESP_OK)
-                    {
-                        return;
-                    }
-                }
-                else if (data_read == 0)
-                {
-                    ESP_LOGI(TAG, "Connection closed, all data received no update found");
+                int data_read = esp_http_client_read(client_updates, buffer, OTABUFF);
+
+                if (data_read <= 0){
+                    ESP_LOGE(TAG, "connection terminated");
                     break;
+                }
+                else{
+                    ESP_LOGI(TAG, "Read some data...");
+                    err = esp_ota_write( update_handle, buffer, data_read);
+                    if (err != ESP_OK)  return;
                 }
             }
 
+            // wrap up update
             err = esp_ota_end(update_handle);
             if (err != ESP_OK){
-                ESP_LOGE(TAG, "esp_ota_end failed!");
+                ESP_LOGE(TAG, "couldnt complete ota update");
                 return;
             }
 
             err = esp_ota_set_boot_partition(update_partition);
             if (err != ESP_OK){
-                ESP_LOGE(TAG, "esp_ota_set_boot_partition failed!");
+                ESP_LOGE(TAG, "set boot partition error");
                 return;
             }
 
-            ESP_LOGI(TAG, "Prepare to restart system!");
+            ESP_LOGI(TAG, "Update sucessful");
             esp_restart();
         }else{
-            ESP_LOGE(TAG, "\nSIZE ZERO LOL");
+            ESP_LOGE(TAG, "SIZE ZERO");
+            ESP_LOGI(TAG, "No new version available, current: %d", version);
         }
+        free(buffer);
     }
     else{
         ESP_LOGE(TAG, "Failed to check for updates, HTTP error: %d", err);

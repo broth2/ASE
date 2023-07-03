@@ -136,5 +136,6 @@ void app_main(void)
     xTaskCreate(&terminalTask, "terminal_Task", 4096, NULL, configMAX_PRIORITIES, NULL);
     //esp_log_level_set("*", ESP_LOG_NONE);
 
-    
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
+    xTaskCreate(&upT, "update_Task", 4096, NULL, configMAX_PRIORITIES, NULL);
 }

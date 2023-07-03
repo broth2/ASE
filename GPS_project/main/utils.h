@@ -27,6 +27,7 @@ void gpsTask(void *parameters);
 void wifiCheckTask(void *parameters);
 void terminalTask(void *parameters);
 void http_post_task(void *pvParameters);
+void upT(void *parameters);
 void updateTask();
 void initialize_sntp();
 void wait_for_sntp_sync();
